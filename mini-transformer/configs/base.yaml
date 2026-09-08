@@ -1,0 +1,24 @@
+dataset:
+  train_path: ../archive/train.csv
+  validation_path: ../archive/validation.csv
+  text_column: text
+  tokenizer: char
+  context_length: 256
+  batch_size: 32
+  max_train_chars: 2000000
+  max_validation_chars: 200000
+
+model:
+  vocab_size: null
+  d_model: 256
+  n_layers: 6
+  n_heads: 8
+  context_length: 256
+
+training:
+  seed: 1337
+  learning_rate: 0.0003
+  weight_decay: 0.1
+  max_steps: 10000
+  eval_interval: 500
+  grad_clip: 1.0
