@@ -4,11 +4,13 @@ from .attention import (
     causal_mask,
 )
 from .mlp import FeedForward
+from .norm import RMSNorm
 from .rope import RotaryPositionalEmbeddings, apply_rotary_pos_emb
 from .transformer import TokenEmbeddings
 
 __all__ = [
     "FeedForward",
+    "RMSNorm",
     "RotaryPositionalEmbeddings",
     "MultiHeadCausalSelfAttention",
     "SingleHeadCausalSelfAttention",
