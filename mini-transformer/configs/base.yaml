@@ -2,7 +2,9 @@ dataset:
   train_path: ../archive/train.csv
   validation_path: ../archive/validation.csv
   text_column: text
-  tokenizer: char
+  tokenizer: bpe
+  vocab_size: 512
+  min_pair_frequency: 2
   context_length: 256
   batch_size: 32
   max_train_chars: 2000000

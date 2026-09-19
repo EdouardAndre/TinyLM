@@ -3,6 +3,7 @@ import csv
 import torch
 
 from data.dataset import (
+    BytePairTokenizer,
     CharacterTokenizer,
     LanguageModelingDataset,
     TinyStoriesDataModule,
@@ -25,6 +26,15 @@ def test_character_tokenizer_round_trips_known_text():
 
     assert tokenizer.decode(token_ids) == "cab"
     assert tokenizer.vocab_size == 5
+
+
+def test_bpe_tokenizer_learns_frequent_pairs_and_round_trips_text():
+    tokenizer = BytePairTokenizer.train(["low lower lowest"], vocab_size=20)
+
+    token_ids = tokenizer.encode("lower")
+
+    assert len(token_ids) < len("lower")
+    assert tokenizer.decode(token_ids) == "lower"
 
 
 def test_language_modeling_dataset_returns_next_token_pairs():
@@ -50,6 +60,7 @@ def test_csv_data_module_batches_are_batch_by_time(tmp_path):
         validation_path=validation_csv,
         context_length=4,
         batch_size=2,
+        vocab_size=32,
     )
     data.setup()
 
@@ -64,6 +75,16 @@ def test_build_tokenizer_from_csv_uses_selected_text_column(tmp_path):
     csv_path = tmp_path / "stories.csv"
     _write_csv(csv_path, ["tiny story"])
 
-    tokenizer = build_tokenizer_from_csv([csv_path])
+    tokenizer = build_tokenizer_from_csv([csv_path], vocab_size=32)
 
+    assert tokenizer.decode(tokenizer.encode("tiny story")) == "tiny story"
+
+
+def test_build_tokenizer_from_csv_can_still_build_character_tokenizer(tmp_path):
+    csv_path = tmp_path / "stories.csv"
+    _write_csv(csv_path, ["tiny story"])
+
+    tokenizer = build_tokenizer_from_csv([csv_path], tokenizer_type="char")
+
+    assert isinstance(tokenizer, CharacterTokenizer)
     assert tokenizer.decode(tokenizer.encode("tiny story")) == "tiny story"
