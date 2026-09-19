@@ -3,6 +3,7 @@ from .attention import (
     SingleHeadCausalSelfAttention,
     causal_mask,
 )
+from .block import TransformerBlock
 from .mlp import FeedForward
 from .norm import RMSNorm
 from .rope import RotaryPositionalEmbeddings, apply_rotary_pos_emb
@@ -14,6 +15,7 @@ __all__ = [
     "RotaryPositionalEmbeddings",
     "MultiHeadCausalSelfAttention",
     "SingleHeadCausalSelfAttention",
+    "TransformerBlock",
     "TokenEmbeddings",
     "apply_rotary_pos_emb",
     "causal_mask",
