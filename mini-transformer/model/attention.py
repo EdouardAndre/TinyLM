@@ -61,3 +61,67 @@ class SingleHeadCausalSelfAttention(nn.Module):
         if return_attention:
             return output, attention_weights
         return output
+
+
+class MultiHeadCausalSelfAttention(nn.Module):
+    """Multi-head causal self-attention with RoPE applied inside each head."""
+
+    def __init__(self, d_model: int, n_heads: int) -> None:
+        super().__init__()
+        if d_model <= 0:
+            raise ValueError("d_model must be positive")
+        if n_heads <= 0:
+            raise ValueError("n_heads must be positive")
+        if d_model % n_heads != 0:
+            raise ValueError("d_model must be divisible by n_heads")
+
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.head_dim = d_model // n_heads
+        self.q_proj = nn.Linear(d_model, d_model, bias=False)
+        self.k_proj = nn.Linear(d_model, d_model, bias=False)
+        self.v_proj = nn.Linear(d_model, d_model, bias=False)
+        self.out_proj = nn.Linear(d_model, d_model, bias=False)
+        self.rope = RotaryPositionalEmbeddings(head_dim=self.head_dim)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        return_attention: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        if x.ndim != 3:
+            raise ValueError("x must be shaped [B, T, D]")
+        if x.shape[-1] != self.d_model:
+            raise ValueError(f"Expected last dimension {self.d_model}, got {x.shape[-1]}")
+
+        batch_size, sequence_length, _ = x.shape
+        q = self._split_heads(self.q_proj(x), batch_size, sequence_length)
+        k = self._split_heads(self.k_proj(x), batch_size, sequence_length)
+        v = self._split_heads(self.v_proj(x), batch_size, sequence_length)
+        q, k = apply_rotary_pos_emb(q, k, self.rope)
+
+        scores = q @ k.transpose(-2, -1)
+        scores = scores / math.sqrt(self.head_dim)
+
+        mask = causal_mask(sequence_length, device=x.device)
+        scores = scores.masked_fill(~mask, torch.finfo(scores.dtype).min)
+        attention_weights = F.softmax(scores, dim=-1)
+        output = attention_weights @ v
+
+        output = output.transpose(1, 2).contiguous()
+        output = output.view(batch_size, sequence_length, self.d_model)
+        output = self.out_proj(output)
+
+        if return_attention:
+            return output, attention_weights
+        return output
+
+    def _split_heads(
+        self,
+        x: torch.Tensor,
+        batch_size: int,
+        sequence_length: int,
+    ) -> torch.Tensor:
+        x = x.view(batch_size, sequence_length, self.n_heads, self.head_dim)
+        return x.transpose(1, 2)
