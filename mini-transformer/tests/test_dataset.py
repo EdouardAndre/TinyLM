@@ -1,10 +1,12 @@
 import csv
 
+import pytest
 import torch
 
 from data.dataset import (
     BytePairTokenizer,
     CharacterTokenizer,
+    FastBytePairTokenizer,
     LanguageModelingDataset,
     TinyStoriesDataModule,
     build_tokenizer_from_csv,
@@ -45,6 +47,33 @@ def test_bpe_tokenizer_state_round_trips_without_retraining():
 
     assert restored.encode("lower") == tokenizer.encode("lower")
     assert restored.decode(restored.encode("lowest")) == "lowest"
+
+
+def test_fast_bpe_tokenizer_can_train_cache_and_reload(tmp_path):
+    pytest.importorskip("tokenizers")
+    train_csv = tmp_path / "train.csv"
+    validation_csv = tmp_path / "validation.csv"
+    cache_path = tmp_path / "tokenizers" / "tiny.json"
+    _write_csv(train_csv, ["low lower lowest"])
+    _write_csv(validation_csv, ["newer wider"])
+
+    tokenizer = build_tokenizer_from_csv(
+        [train_csv, validation_csv],
+        tokenizer_type="fast_bpe",
+        vocab_size=64,
+        cache_path=cache_path,
+    )
+    restored = build_tokenizer_from_csv(
+        [train_csv, validation_csv],
+        tokenizer_type="fast_bpe",
+        vocab_size=64,
+        cache_path=cache_path,
+    )
+
+    assert isinstance(tokenizer, FastBytePairTokenizer)
+    assert cache_path.exists()
+    assert restored.encode("lower") == tokenizer.encode("lower")
+    assert restored.decode(restored.encode("lowest"))
 
 
 def test_language_modeling_dataset_returns_next_token_pairs():

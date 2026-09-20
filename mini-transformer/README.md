@@ -35,6 +35,7 @@ Dh = D / H
 ## Implemented
 
 - BPE-style tokenizer trained from the local CSV corpus
+- optional Rust-backed BPE training path for full-dataset runs
 - next-token language-modeling dataset
 - token embeddings
 - RoPE applied to Q/K
@@ -105,6 +106,7 @@ The cloud config uses:
 GPU device: cuda
 Precision: BF16 autocast
 Tokenizer: BPE, vocab size 1024
+Tokenizer cache: tokenizers/tinystories_bpe_1024.json
 Context length: 256
 Batch size: 64
 Gradient accumulation: 2
@@ -190,6 +192,8 @@ The validation loss was best around step 3000, then worsened while training loss
 ## Limitations
 
 - The BPE tokenizer is educational and simple, not production-grade.
+- Full-dataset cloud training uses `fast_bpe`, which trains BPE from the local CSVs
+  with the `tokenizers` package and caches the result.
 - The local training run uses a capped dataset slice.
 - Existing older checkpoints may not include tokenizer state; new checkpoints do.
 - The current benchmark is a local smoke benchmark, not a full hardware study.

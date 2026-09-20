@@ -2,9 +2,10 @@ dataset:
   train_path: ../archive/train.csv
   validation_path: ../archive/validation.csv
   text_column: text
-  tokenizer: bpe
+  tokenizer: fast_bpe
   vocab_size: 1024
   min_pair_frequency: 2
+  tokenizer_cache_path: tokenizers/tinystories_bpe_1024.json
   context_length: 256
   batch_size: 64
   max_train_chars: null

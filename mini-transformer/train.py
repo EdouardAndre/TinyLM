@@ -33,6 +33,7 @@ def main() -> None:
         batch_size=data_config["batch_size"],
         max_train_chars=data_config.get("max_train_chars"),
         max_validation_chars=data_config.get("max_validation_chars"),
+        tokenizer_cache_path=data_config.get("tokenizer_cache_path"),
     )
     data.setup()
 

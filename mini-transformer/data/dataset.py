@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from collections import Counter
 from pathlib import Path
 import re
+import tempfile
 from typing import Iterable, Protocol
 
 import torch
@@ -153,12 +154,106 @@ class BytePairTokenizer:
         return tokenizer
 
 
+class FastBytePairTokenizer:
+    """Rust-backed BPE tokenizer trained from the local corpus."""
+
+    def __init__(self, tokenizer) -> None:
+        self.tokenizer = tokenizer
+        self.pad_token_id = self.tokenizer.token_to_id("<pad>")
+        self.unk_token_id = self.tokenizer.token_to_id("<unk>")
+
+    @classmethod
+    def train_from_csv(
+        cls,
+        csv_paths: Iterable[str | Path],
+        text_column: str = "text",
+        *,
+        vocab_size: int,
+        max_chars_per_file: int | None = None,
+        min_pair_frequency: int = 2,
+        cache_path: str | Path | None = None,
+    ) -> "FastBytePairTokenizer":
+        if cache_path is not None and Path(cache_path).exists():
+            return cls.from_file(cache_path)
+
+        try:
+            from tokenizers import Tokenizer as BackendTokenizer
+            from tokenizers import models, pre_tokenizers, trainers
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "tokenizers is required for tokenizer_type='fast_bpe'. "
+                "Install project dependencies with `pip install -r requirements.txt`."
+            ) from exc
+
+        tokenizer = BackendTokenizer(models.BPE(unk_token="<unk>"))
+        tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+        trainer = trainers.BpeTrainer(
+            vocab_size=vocab_size,
+            min_frequency=min_pair_frequency,
+            special_tokens=["<pad>", "<unk>"],
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            text_files = _write_tokenizer_training_files(
+                csv_paths,
+                text_column=text_column,
+                max_chars_per_file=max_chars_per_file,
+                output_dir=Path(temp_dir),
+            )
+            tokenizer.train([str(path) for path in text_files], trainer)
+
+        if cache_path is not None:
+            cache_path = Path(cache_path)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tokenizer.save(str(cache_path))
+
+        return cls(tokenizer)
+
+    @classmethod
+    def from_file(cls, tokenizer_path: str | Path) -> "FastBytePairTokenizer":
+        try:
+            from tokenizers import Tokenizer as BackendTokenizer
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "tokenizers is required to load a fast_bpe tokenizer."
+            ) from exc
+        return cls(BackendTokenizer.from_file(str(tokenizer_path)))
+
+    @classmethod
+    def from_state_dict(cls, state: dict) -> "FastBytePairTokenizer":
+        try:
+            from tokenizers import Tokenizer as BackendTokenizer
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "tokenizers is required to restore a fast_bpe tokenizer."
+            ) from exc
+        return cls(BackendTokenizer.from_str(state["tokenizer_json"]))
+
+    @property
+    def vocab_size(self) -> int:
+        return self.tokenizer.get_vocab_size()
+
+    def encode(self, text: str) -> list[int]:
+        return self.tokenizer.encode(text).ids
+
+    def decode(self, token_ids: Iterable[int]) -> str:
+        return self.tokenizer.decode(list(token_ids), skip_special_tokens=True)
+
+    def state_dict(self) -> dict:
+        return {
+            "type": "fast_bpe",
+            "tokenizer_json": self.tokenizer.to_str(),
+        }
+
+
 def tokenizer_from_state_dict(state: dict) -> Tokenizer:
     tokenizer_type = state["type"]
     if tokenizer_type == "char":
         return CharacterTokenizer.from_state_dict(state)
     if tokenizer_type == "bpe":
         return BytePairTokenizer.from_state_dict(state)
+    if tokenizer_type == "fast_bpe":
+        return FastBytePairTokenizer.from_state_dict(state)
     raise ValueError(f"Unsupported tokenizer type: {tokenizer_type}")
 
 
@@ -272,6 +367,25 @@ def build_bpe_tokenizer_from_csv(
     )
 
 
+def build_fast_bpe_tokenizer_from_csv(
+    csv_paths: Iterable[str | Path],
+    text_column: str = "text",
+    *,
+    vocab_size: int,
+    max_chars_per_file: int | None = None,
+    min_pair_frequency: int = 2,
+    cache_path: str | Path | None = None,
+) -> FastBytePairTokenizer:
+    return FastBytePairTokenizer.train_from_csv(
+        csv_paths,
+        text_column=text_column,
+        vocab_size=vocab_size,
+        max_chars_per_file=max_chars_per_file,
+        min_pair_frequency=min_pair_frequency,
+        cache_path=cache_path,
+    )
+
+
 def build_tokenizer_from_csv(
     csv_paths: Iterable[str | Path],
     text_column: str = "text",
@@ -280,6 +394,7 @@ def build_tokenizer_from_csv(
     vocab_size: int = 512,
     max_chars_per_file: int | None = None,
     min_pair_frequency: int = 2,
+    cache_path: str | Path | None = None,
 ) -> Tokenizer:
     if tokenizer_type == "char":
         return build_character_tokenizer_from_csv(
@@ -295,7 +410,38 @@ def build_tokenizer_from_csv(
             max_chars_per_file=max_chars_per_file,
             min_pair_frequency=min_pair_frequency,
         )
-    raise ValueError("tokenizer_type must be either 'char' or 'bpe'")
+    if tokenizer_type == "fast_bpe":
+        return build_fast_bpe_tokenizer_from_csv(
+            csv_paths,
+            text_column=text_column,
+            vocab_size=vocab_size,
+            max_chars_per_file=max_chars_per_file,
+            min_pair_frequency=min_pair_frequency,
+            cache_path=cache_path,
+        )
+    raise ValueError("tokenizer_type must be one of: 'char', 'bpe', 'fast_bpe'")
+
+
+def _write_tokenizer_training_files(
+    csv_paths: Iterable[str | Path],
+    *,
+    text_column: str,
+    max_chars_per_file: int | None,
+    output_dir: Path,
+) -> list[Path]:
+    text_files: list[Path] = []
+    for idx, csv_path in enumerate(csv_paths):
+        text_path = output_dir / f"tokenizer_corpus_{idx}.txt"
+        with text_path.open("w", encoding="utf-8") as handle:
+            for text in _iter_csv_text(
+                csv_path,
+                text_column=text_column,
+                max_chars=max_chars_per_file,
+            ):
+                handle.write(text)
+                handle.write("\n")
+        text_files.append(text_path)
+    return text_files
 
 
 class LanguageModelingDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):
@@ -360,6 +506,7 @@ class TinyStoriesDataModule:
     min_pair_frequency: int = 2
     max_train_chars: int | None = None
     max_validation_chars: int | None = None
+    tokenizer_cache_path: str | Path | None = None
 
     def setup(self) -> None:
         self.tokenizer = build_tokenizer_from_csv(
@@ -369,6 +516,7 @@ class TinyStoriesDataModule:
             vocab_size=self.vocab_size,
             max_chars_per_file=self.max_train_chars,
             min_pair_frequency=self.min_pair_frequency,
+            cache_path=self.tokenizer_cache_path,
         )
         self.train_dataset = LanguageModelingDataset.from_csv(
             self.train_path,
