@@ -70,3 +70,15 @@ def test_mini_transformer_lm_validates_target_shape():
 
     with pytest.raises(ValueError, match="same shape"):
         model(input_ids, targets=targets)
+
+
+def test_mini_transformer_lm_returns_layer_caches():
+    config = TransformerConfig(vocab_size=32, d_model=8, n_layers=2, n_heads=2)
+    model = MiniTransformerLM(config)
+    input_ids = torch.randint(0, config.vocab_size, (3, 5))
+
+    logits, caches = model(input_ids, use_cache=True)
+
+    assert logits.shape == torch.Size([3, 5, config.vocab_size])
+    assert len(caches) == config.n_layers
+    assert caches[0][0].shape == torch.Size([3, config.n_heads, 5, 4])

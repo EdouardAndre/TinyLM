@@ -131,3 +131,21 @@ def test_multi_head_attention_weights_sum_to_one_over_allowed_positions():
 def test_multi_head_attention_requires_model_dim_divisible_by_heads():
     with pytest.raises(ValueError, match="divisible"):
         MultiHeadCausalSelfAttention(d_model=10, n_heads=4)
+
+
+def test_multi_head_attention_returns_and_extends_kv_cache():
+    attention = MultiHeadCausalSelfAttention(d_model=8, n_heads=2)
+    x = torch.randn(2, 3, 8)
+
+    output, cache = attention(x, use_cache=True)
+    k_cache, v_cache = cache
+
+    assert output.shape == torch.Size([2, 3, 8])
+    assert k_cache.shape == torch.Size([2, 2, 3, 4])
+    assert v_cache.shape == torch.Size([2, 2, 3, 4])
+
+    next_x = torch.randn(2, 1, 8)
+    _, extended_cache = attention(next_x, cache=cache, use_cache=True)
+
+    assert extended_cache[0].shape == torch.Size([2, 2, 4, 4])
+    assert extended_cache[1].shape == torch.Size([2, 2, 4, 4])

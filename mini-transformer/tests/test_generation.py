@@ -1,7 +1,8 @@
 import torch
 from torch import nn
 
-from generate import generate_token_ids, sample_next_token
+from generate import generate_token_ids, generate_token_ids_with_cache, sample_next_token
+from model import MiniTransformerLM, TransformerConfig
 
 
 class IncrementingDummyModel(nn.Module):
@@ -64,3 +65,31 @@ def test_generate_token_ids_crops_to_context_length():
     )
 
     assert model.seen_lengths == [3, 3]
+
+
+def test_cached_greedy_generation_matches_uncached_greedy_generation():
+    torch.manual_seed(0)
+    model = MiniTransformerLM(
+        TransformerConfig(
+            vocab_size=16,
+            d_model=8,
+            n_layers=2,
+            n_heads=2,
+        )
+    )
+    input_ids = torch.tensor([[1, 2, 3]], dtype=torch.long)
+
+    uncached = generate_token_ids(
+        model,
+        input_ids,
+        max_new_tokens=4,
+        greedy=True,
+    )
+    cached = generate_token_ids_with_cache(
+        model,
+        input_ids,
+        max_new_tokens=4,
+        greedy=True,
+    )
+
+    assert torch.equal(cached, uncached)

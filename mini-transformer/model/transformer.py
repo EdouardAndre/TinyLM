@@ -6,6 +6,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from .attention import KVCache
 from .block import TransformerBlock
 from .norm import RMSNorm
 
@@ -80,20 +81,35 @@ class MiniTransformerLM(nn.Module):
         self,
         input_ids: torch.Tensor,
         targets: torch.Tensor | None = None,
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        *,
+        caches: list[KVCache] | None = None,
+        use_cache: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, list[KVCache]]:
         if input_ids.ndim != 2:
             raise ValueError("input_ids must be shaped [B, T]")
         if input_ids.dtype != torch.long:
             raise TypeError("input_ids must be a torch.long tensor of token IDs")
         if targets is not None and targets.shape != input_ids.shape:
             raise ValueError("targets must have the same shape as input_ids")
+        if use_cache and targets is not None:
+            raise ValueError("targets are not supported when use_cache=True")
+        if caches is not None and len(caches) != len(self.blocks):
+            raise ValueError("caches must have one entry per Transformer block")
 
         x = self.token_embeddings(input_ids)
-        for block in self.blocks:
-            x = block(x)
+        new_caches: list[KVCache] = []
+        for block_idx, block in enumerate(self.blocks):
+            if use_cache:
+                block_cache = None if caches is None else caches[block_idx]
+                x, new_cache = block(x, cache=block_cache, use_cache=True)
+                new_caches.append(new_cache)
+            else:
+                x = block(x)
         x = self.final_norm(x)
         logits = self.lm_head(x)
 
+        if use_cache:
+            return logits, new_caches
         if targets is None:
             return logits
 

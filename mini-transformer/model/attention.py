@@ -9,12 +9,37 @@ from torch.nn import functional as F
 from .rope import RotaryPositionalEmbeddings, apply_rotary_pos_emb
 
 
-def causal_mask(sequence_length: int, device: torch.device | None = None) -> torch.Tensor:
-    """Returns a [T, T] mask where True means the position is allowed to attend."""
+KVCache = tuple[torch.Tensor, torch.Tensor]
 
-    if sequence_length <= 0:
-        raise ValueError("sequence_length must be positive")
-    return torch.ones(sequence_length, sequence_length, dtype=torch.bool, device=device).tril()
+
+def causal_mask(
+    query_length: int | None = None,
+    key_length: int | None = None,
+    *,
+    past_length: int = 0,
+    device: torch.device | None = None,
+    sequence_length: int | None = None,
+) -> torch.Tensor:
+    """Returns a mask where True means the query position may attend to the key."""
+
+    if query_length is None:
+        query_length = sequence_length
+    if query_length is None:
+        raise ValueError("query_length must be provided")
+    if query_length <= 0:
+        raise ValueError("query_length must be positive")
+    if key_length is None:
+        key_length = query_length
+    if key_length <= 0:
+        raise ValueError("key_length must be positive")
+
+    query_positions = torch.arange(
+        past_length,
+        past_length + query_length,
+        device=device,
+    ).unsqueeze(-1)
+    key_positions = torch.arange(key_length, device=device).unsqueeze(0)
+    return key_positions <= query_positions
 
 
 class SingleHeadCausalSelfAttention(nn.Module):
@@ -88,31 +113,47 @@ class MultiHeadCausalSelfAttention(nn.Module):
         self,
         x: torch.Tensor,
         *,
+        cache: KVCache | None = None,
+        use_cache: bool = False,
         return_attention: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor | tuple[torch.Tensor, KVCache] | tuple[torch.Tensor, torch.Tensor]:
         if x.ndim != 3:
             raise ValueError("x must be shaped [B, T, D]")
         if x.shape[-1] != self.d_model:
             raise ValueError(f"Expected last dimension {self.d_model}, got {x.shape[-1]}")
 
-        batch_size, sequence_length, _ = x.shape
-        q = self._split_heads(self.q_proj(x), batch_size, sequence_length)
-        k = self._split_heads(self.k_proj(x), batch_size, sequence_length)
-        v = self._split_heads(self.v_proj(x), batch_size, sequence_length)
-        q, k = apply_rotary_pos_emb(q, k, self.rope)
+        batch_size, query_length, _ = x.shape
+        past_length = 0 if cache is None else cache[0].shape[-2]
+        q = self._split_heads(self.q_proj(x), batch_size, query_length)
+        k = self._split_heads(self.k_proj(x), batch_size, query_length)
+        v = self._split_heads(self.v_proj(x), batch_size, query_length)
+        q, k = apply_rotary_pos_emb(q, k, self.rope, start_position=past_length)
+
+        if cache is not None:
+            cached_k, cached_v = cache
+            k = torch.cat([cached_k, k], dim=-2)
+            v = torch.cat([cached_v, v], dim=-2)
 
         scores = q @ k.transpose(-2, -1)
         scores = scores / math.sqrt(self.head_dim)
 
-        mask = causal_mask(sequence_length, device=x.device)
+        mask = causal_mask(
+            query_length,
+            key_length=k.shape[-2],
+            past_length=past_length,
+            device=x.device,
+        )
         scores = scores.masked_fill(~mask, torch.finfo(scores.dtype).min)
         attention_weights = F.softmax(scores, dim=-1)
         output = attention_weights @ v
 
         output = output.transpose(1, 2).contiguous()
-        output = output.view(batch_size, sequence_length, self.d_model)
+        output = output.view(batch_size, query_length, self.d_model)
         output = self.out_proj(output)
 
+        if use_cache:
+            new_cache = (k, v)
+            return output, new_cache
         if return_attention:
             return output, attention_weights
         return output

@@ -56,6 +56,56 @@ def generate_token_ids(
     return generated
 
 
+@torch.no_grad()
+def generate_token_ids_with_cache(
+    model: torch.nn.Module,
+    input_ids: torch.Tensor,
+    *,
+    max_new_tokens: int,
+    context_length: int | None = None,
+    temperature: float = 1.0,
+    top_k: int | None = None,
+    greedy: bool = False,
+    generator: torch.Generator | None = None,
+) -> torch.Tensor:
+    if input_ids.ndim != 2:
+        raise ValueError("input_ids must be shaped [B, T]")
+    if input_ids.dtype != torch.long:
+        raise TypeError("input_ids must be a torch.long tensor of token IDs")
+    if max_new_tokens < 0:
+        raise ValueError("max_new_tokens must be non-negative")
+    if max_new_tokens == 0:
+        return input_ids
+
+    model.eval()
+    generated = input_ids
+    model_input = generated if context_length is None else generated[:, -context_length:]
+    logits, caches = model(model_input, use_cache=True)
+
+    for _ in range(max_new_tokens):
+        next_token = sample_next_token(
+            logits[:, -1, :],
+            temperature=temperature,
+            top_k=top_k,
+            greedy=greedy,
+            generator=generator,
+        )
+        generated = torch.cat([generated, next_token], dim=1)
+
+        if context_length is not None:
+            caches = _crop_caches(caches, max_length=max(context_length - 1, 0))
+
+        logits, caches = model(next_token, caches=caches, use_cache=True)
+
+    return generated
+
+
+def _crop_caches(caches, *, max_length: int):
+    if max_length <= 0:
+        return [(k[:, :, :0, :], v[:, :, :0, :]) for k, v in caches]
+    return [(k[:, :, -max_length:, :], v[:, :, -max_length:, :]) for k, v in caches]
+
+
 def sample_next_token(
     logits: torch.Tensor,
     *,
@@ -95,6 +145,7 @@ def main() -> None:
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-k", type=int, default=None)
     parser.add_argument("--greedy", action="store_true")
+    parser.add_argument("--use-cache", action="store_true")
     parser.add_argument("--device", type=str, default=None)
     args = parser.parse_args()
 
@@ -132,7 +183,8 @@ def main() -> None:
         model.load_state_dict(checkpoint["model"])
 
     input_ids = torch.tensor([data.tokenizer.encode(args.prompt)], dtype=torch.long, device=device)
-    output_ids = generate_token_ids(
+    generate_fn = generate_token_ids_with_cache if args.use_cache else generate_token_ids
+    output_ids = generate_fn(
         model,
         input_ids,
         max_new_tokens=args.max_new_tokens,
