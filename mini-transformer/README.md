@@ -83,6 +83,40 @@ The larger default run is:
 /Users/eda/.pyenv/versions/3.11.7/bin/python3 mini-transformer/train.py --config mini-transformer/configs/base.yaml
 ```
 
+## Cloud GPU Run
+
+For a rented GPU machine, clone the repo, place the dataset at `archive/train.csv` and
+`archive/validation.csv`, then run:
+
+```bash
+bash scripts/setup_cloud_gpu.sh
+```
+
+That script creates a local virtual environment, installs the project dependencies,
+checks that CUDA is visible, and launches:
+
+```bash
+python mini-transformer/train.py --config mini-transformer/configs/cloud_gpu.yaml
+```
+
+The cloud config uses:
+
+```text
+GPU device: cuda
+Precision: BF16 autocast
+Tokenizer: BPE, vocab size 1024
+Context length: 256
+Batch size: 64
+Gradient accumulation: 2
+Effective batch size: 128 sequences
+Model: 8 layers, 8 heads, D=384
+Training: 20,000 optimizer steps
+```
+
+Recommended rental target: start with one RTX 4090 on Vast.ai or RunPod. H100/H200 is
+much faster, but this model is small enough that the expensive cards are mostly useful
+if you want results quickly rather than cheaply.
+
 ## Generation
 
 With random or trained weights:

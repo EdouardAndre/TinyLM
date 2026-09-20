@@ -1,0 +1,31 @@
+dataset:
+  train_path: ../archive/train.csv
+  validation_path: ../archive/validation.csv
+  text_column: text
+  tokenizer: bpe
+  vocab_size: 1024
+  min_pair_frequency: 2
+  context_length: 256
+  batch_size: 64
+  max_train_chars: null
+  max_validation_chars: null
+
+model:
+  vocab_size: null
+  d_model: 384
+  n_layers: 8
+  n_heads: 8
+  context_length: 256
+
+training:
+  seed: 1337
+  learning_rate: 0.0003
+  weight_decay: 0.1
+  max_steps: 20000
+  eval_interval: 500
+  grad_clip: 1.0
+  checkpoint_dir: checkpoints/cloud_gpu
+  checkpoint_interval: 1000
+  device: cuda
+  grad_accumulation_steps: 2
+  precision: bf16
