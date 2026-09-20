@@ -8,6 +8,7 @@ from data.dataset import (
     LanguageModelingDataset,
     TinyStoriesDataModule,
     build_tokenizer_from_csv,
+    tokenizer_from_state_dict,
 )
 
 
@@ -35,6 +36,15 @@ def test_bpe_tokenizer_learns_frequent_pairs_and_round_trips_text():
 
     assert len(token_ids) < len("lower")
     assert tokenizer.decode(token_ids) == "lower"
+
+
+def test_bpe_tokenizer_state_round_trips_without_retraining():
+    tokenizer = BytePairTokenizer.train(["low lower lowest"], vocab_size=20)
+
+    restored = tokenizer_from_state_dict(tokenizer.state_dict())
+
+    assert restored.encode("lower") == tokenizer.encode("lower")
+    assert restored.decode(restored.encode("lowest")) == "lowest"
 
 
 def test_language_modeling_dataset_returns_next_token_pairs():

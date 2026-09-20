@@ -76,3 +76,68 @@ def test_train_writes_checkpoints(tmp_path):
     checkpoint_path = Path(tmp_path) / "step_000002.pt"
     assert result.step == 2
     assert checkpoint_path.exists()
+
+
+def test_train_checkpoint_includes_extra_state(tmp_path):
+    model = _tiny_model()
+    train_loader = _tiny_loader()
+
+    train(
+        model,
+        train_loader,
+        None,
+        TrainingConfig(
+            max_steps=1,
+            eval_interval=10,
+            checkpoint_dir=str(tmp_path),
+            checkpoint_interval=1,
+            device="cpu",
+        ),
+        checkpoint_extra_state={"tokenizer": {"type": "test"}},
+    )
+
+    checkpoint = torch.load(Path(tmp_path) / "step_000001.pt", map_location="cpu")
+    assert checkpoint["tokenizer"] == {"type": "test"}
+
+
+def test_train_supports_gradient_accumulation():
+    model = _tiny_model()
+    train_loader = _tiny_loader()
+
+    result = train(
+        model,
+        train_loader,
+        None,
+        TrainingConfig(
+            max_steps=2,
+            eval_interval=10,
+            checkpoint_dir=None,
+            device="cpu",
+            grad_accumulation_steps=2,
+        ),
+    )
+
+    assert result.step == 2
+    assert result.train_loss > 0
+
+
+def test_train_validates_precision():
+    model = _tiny_model()
+    train_loader = _tiny_loader()
+
+    try:
+        train(
+            model,
+            train_loader,
+            None,
+            TrainingConfig(
+                max_steps=1,
+                checkpoint_dir=None,
+                device="cpu",
+                precision="fp16",
+            ),
+        )
+    except ValueError as error:
+        assert "precision" in str(error)
+    else:
+        raise AssertionError("Expected ValueError")

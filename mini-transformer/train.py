@@ -61,7 +61,15 @@ def main() -> None:
             checkpoint_dir=training_config.get("checkpoint_dir", "checkpoints"),
             checkpoint_interval=training_config.get("checkpoint_interval"),
             device=training_config.get("device"),
+            grad_accumulation_steps=training_config.get("grad_accumulation_steps", 1),
+            precision=training_config.get("precision", "fp32"),
         ),
+        checkpoint_extra_state={
+            "tokenizer": data.tokenizer.state_dict(),
+            "transformer_config": dict(model.config.__dict__),
+            "data_config": data_config,
+            "model_config": model_config,
+        },
     )
 
     print(

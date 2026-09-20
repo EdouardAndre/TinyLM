@@ -1,0 +1,31 @@
+dataset:
+  train_path: ../archive/train.csv
+  validation_path: ../archive/validation.csv
+  text_column: text
+  tokenizer: bpe
+  vocab_size: 256
+  min_pair_frequency: 2
+  context_length: 128
+  batch_size: 8
+  max_train_chars: 100000
+  max_validation_chars: 10000
+
+model:
+  vocab_size: null
+  d_model: 128
+  n_layers: 2
+  n_heads: 4
+  context_length: 128
+
+training:
+  seed: 1337
+  learning_rate: 0.0005
+  weight_decay: 0.05
+  max_steps: 500
+  eval_interval: 100
+  grad_clip: 1.0
+  checkpoint_dir: checkpoints
+  checkpoint_interval: 250
+  device: null
+  grad_accumulation_steps: 2
+  precision: fp32

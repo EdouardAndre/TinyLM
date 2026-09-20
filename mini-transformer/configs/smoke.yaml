@@ -27,3 +27,5 @@ training:
   checkpoint_dir: null
   checkpoint_interval: null
   device: null
+  grad_accumulation_steps: 1
+  precision: fp32

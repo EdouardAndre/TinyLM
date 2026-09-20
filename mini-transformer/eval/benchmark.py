@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from data import TinyStoriesDataModule
+from data import TinyStoriesDataModule, tokenizer_from_state_dict
 from generate import sample_next_token
 from model import MiniTransformerLM, TransformerConfig
 from train import _load_config, _resolve_path
@@ -199,36 +199,42 @@ def main() -> None:
     project_root = args.config.resolve().parents[1]
     data_config = config["dataset"]
     model_config = config["model"]
+    checkpoint = None
+    if args.checkpoint is not None:
+        checkpoint = torch.load(args.checkpoint, map_location="cpu")
 
-    data = TinyStoriesDataModule(
-        train_path=_resolve_path(project_root, data_config["train_path"]),
-        validation_path=_resolve_path(project_root, data_config["validation_path"]),
-        text_column=data_config["text_column"],
-        tokenizer_type=data_config["tokenizer"],
-        vocab_size=data_config["vocab_size"],
-        min_pair_frequency=data_config["min_pair_frequency"],
-        context_length=data_config["context_length"],
-        batch_size=data_config["batch_size"],
-        max_train_chars=data_config.get("max_train_chars"),
-        max_validation_chars=data_config.get("max_validation_chars"),
-    )
-    data.setup()
+    if checkpoint is not None and "tokenizer" in checkpoint:
+        tokenizer = tokenizer_from_state_dict(checkpoint["tokenizer"])
+    else:
+        data = TinyStoriesDataModule(
+            train_path=_resolve_path(project_root, data_config["train_path"]),
+            validation_path=_resolve_path(project_root, data_config["validation_path"]),
+            text_column=data_config["text_column"],
+            tokenizer_type=data_config["tokenizer"],
+            vocab_size=data_config["vocab_size"],
+            min_pair_frequency=data_config["min_pair_frequency"],
+            context_length=data_config["context_length"],
+            batch_size=data_config["batch_size"],
+            max_train_chars=data_config.get("max_train_chars"),
+            max_validation_chars=data_config.get("max_validation_chars"),
+        )
+        data.setup()
+        tokenizer = data.tokenizer
 
     device = torch.device(args.device or config["training"].get("device") or "cpu")
     model = MiniTransformerLM(
         TransformerConfig(
-            vocab_size=data.tokenizer.vocab_size,
+            vocab_size=tokenizer.vocab_size,
             d_model=model_config["d_model"],
             n_layers=model_config["n_layers"],
             n_heads=model_config["n_heads"],
         )
     ).to(device)
 
-    if args.checkpoint is not None:
-        checkpoint = torch.load(args.checkpoint, map_location=device)
+    if checkpoint is not None:
         model.load_state_dict(checkpoint["model"])
 
-    input_ids = torch.tensor([data.tokenizer.encode(args.prompt)], dtype=torch.long, device=device)
+    input_ids = torch.tensor([tokenizer.encode(args.prompt)], dtype=torch.long, device=device)
     naive_result = benchmark_naive_generation(
         model,
         input_ids,

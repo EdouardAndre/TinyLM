@@ -41,6 +41,18 @@ class CharacterTokenizer:
     def decode(self, token_ids: Iterable[int]) -> str:
         return "".join(self.itos[token_id] for token_id in token_ids)
 
+    def state_dict(self) -> dict:
+        return {"type": "char", "itos": self.itos}
+
+    @classmethod
+    def from_state_dict(cls, state: dict) -> "CharacterTokenizer":
+        tokenizer = cls([])
+        tokenizer.itos = list(state["itos"])
+        tokenizer.stoi = {token: idx for idx, token in enumerate(tokenizer.itos)}
+        tokenizer.pad_token_id = tokenizer.stoi["<pad>"]
+        tokenizer.unk_token_id = tokenizer.stoi["<unk>"]
+        return tokenizer
+
 
 class BytePairTokenizer:
     """Small byte-pair-encoding tokenizer trained from text.
@@ -122,6 +134,32 @@ class BytePairTokenizer:
                 continue
             pieces.append(token)
         return "".join(pieces)
+
+    def state_dict(self) -> dict:
+        return {
+            "type": "bpe",
+            "itos": self.itos,
+            "merges": self.merges,
+        }
+
+    @classmethod
+    def from_state_dict(cls, state: dict) -> "BytePairTokenizer":
+        tokenizer = cls([], [])
+        tokenizer.itos = list(state["itos"])
+        tokenizer.stoi = {token: idx for idx, token in enumerate(tokenizer.itos)}
+        tokenizer.merges = [tuple(pair) for pair in state["merges"]]
+        tokenizer.pad_token_id = tokenizer.stoi["<pad>"]
+        tokenizer.unk_token_id = tokenizer.stoi["<unk>"]
+        return tokenizer
+
+
+def tokenizer_from_state_dict(state: dict) -> Tokenizer:
+    tokenizer_type = state["type"]
+    if tokenizer_type == "char":
+        return CharacterTokenizer.from_state_dict(state)
+    if tokenizer_type == "bpe":
+        return BytePairTokenizer.from_state_dict(state)
+    raise ValueError(f"Unsupported tokenizer type: {tokenizer_type}")
 
 
 def _iter_csv_text(
