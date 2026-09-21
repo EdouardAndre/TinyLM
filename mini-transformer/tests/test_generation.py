@@ -3,6 +3,7 @@ from torch import nn
 
 from generate import generate_token_ids, generate_token_ids_with_cache, sample_next_token
 from model import MiniTransformerLM, TransformerConfig
+from serve_generation import GenerationApp
 
 
 class IncrementingDummyModel(nn.Module):
@@ -93,3 +94,7 @@ def test_cached_greedy_generation_matches_uncached_greedy_generation():
     )
 
     assert torch.equal(cached, uncached)
+
+
+def test_generation_ui_app_is_importable():
+    assert GenerationApp is not None

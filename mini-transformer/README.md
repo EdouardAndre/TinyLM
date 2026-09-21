@@ -1,8 +1,46 @@
-# Mini Transformer
+# TinyLM: Decoder-Only Transformer From Scratch
 
-Decoder-only Transformer language model implemented from scratch in PyTorch.
+TinyLM is a small decoder-only language model implemented in PyTorch for learning
+and demonstrating the mechanics behind modern LLMs.
 
-The goal is not to train a large model. The goal is to understand and implement the core mechanics behind modern LLMs: tokenization, embeddings, RoPE, causal attention, Transformer blocks, training, autoregressive generation, and KV-cache inference.
+The project intentionally implements the Transformer stack directly instead of using
+`nn.Transformer`, Hugging Face `Trainer`, FlashAttention, or pretrained model code.
+It covers tokenization, embeddings, RoPE, causal self-attention, multi-head attention,
+RMSNorm, MLP blocks, residual connections, training, checkpointing, generation, and
+KV-cache inference.
+
+## Results
+
+Cloud training was run on one NVIDIA RTX 4090 using BF16 autocast.
+
+| Metric | Value |
+| --- | ---: |
+| Dataset | TinyStories CSV |
+| Tokenizer | BPE, vocab size 1024 |
+| Model | 8 layers, 8 heads, D=384 |
+| Context length | 256 |
+| Effective batch size | 128 sequences |
+| Training steps | 20,000 |
+| Final train loss | 1.3851 |
+| Final validation loss | 1.1627 |
+| Training throughput | 217,471 tokens/s |
+
+Generation benchmark on the trained cloud checkpoint:
+
+| Mode | Generated Tokens | TTFT | Avg Decode Latency | Tokens/s | Peak Memory |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Naive | 100 | 0.282679s | 0.010086s | 78.05 | 65.93 MB |
+| KV cache | 100 | 0.009137s | 0.009386s | 105.63 | 69.04 MB |
+
+KV-cache generation was `1.35x` faster for this benchmark.
+
+Example generated text from the trained model:
+
+```text
+Once upon a time, there was a little girl named Lily. She loved to play outside
+with her friends. One day, she accidentally pinched her friend. Her friend got mad
+and yelled at her to go home. Lily felt sad...
+```
 
 ## Architecture
 
@@ -11,7 +49,11 @@ input_ids: [B, T]
 -> BPE token embeddings: [B, T, D]
 -> TransformerBlock x n_layers
    -> RMSNorm
-   -> multi-head causal self-attention with RoPE
+   -> multi-head causal self-attention
+      -> Q/K/V projections
+      -> RoPE on Q and K
+      -> causal mask
+      -> attention-weighted value mix
    -> residual add
    -> RMSNorm
    -> MLP: D -> 4D -> GELU -> D
@@ -21,7 +63,7 @@ input_ids: [B, T]
 -> logits: [B, T, V]
 ```
 
-Where:
+Shape notation:
 
 ```text
 B  = batch size
@@ -34,70 +76,82 @@ Dh = D / H
 
 ## Implemented
 
-- BPE-style tokenizer trained from the local CSV corpus
-- optional Rust-backed BPE training path for full-dataset runs
+- CSV text data pipeline
+- character tokenizer for first experiments
+- educational Python BPE tokenizer
+- optimized Rust-backed BPE path via `tokenizers`
+- tokenizer caching for full-dataset cloud runs
 - next-token language-modeling dataset
-- token embeddings
-- RoPE applied to Q/K
+- token embedding table
+- RoPE positional encoding
 - single-head attention for learning/debugging
 - multi-head causal self-attention
+- KV cache for faster autoregressive decoding
 - RMSNorm
 - MLP/feed-forward block
 - pre-norm Transformer decoder block
 - full decoder-only language model
 - AdamW training loop
-- validation loss
-- checkpoint saving
+- validation evaluation
+- checkpoint saving with tokenizer/model metadata
 - gradient accumulation
-- optional BF16 autocast hook
+- BF16 autocast support
 - greedy, temperature, and top-k generation
-- KV-cache generation
+- local web UI for generation
 - naive vs cached generation benchmark
-- 68 unit tests
+- unit tests
 
 ## What Is Not Used
 
 - `nn.Transformer`
-- Hugging Face Trainer
+- Hugging Face `Trainer`
+- pretrained model weights
 - FlashAttention
 - distributed training
-- pretrained tokenizers
 - custom CUDA kernels
 
-## Run
+The fast BPE path uses the `tokenizers` package because full-corpus BPE training is
+not the main learning objective of this project. The model architecture and training
+loop are still implemented directly.
 
-Use the PyTorch-enabled Python from the repository root:
+## Setup
 
-```bash
-/Users/eda/.pyenv/versions/3.11.7/bin/python3 mini-transformer/train.py --config mini-transformer/configs/smoke.yaml
-```
-
-For a more meaningful local run:
+From the repository root:
 
 ```bash
-/Users/eda/.pyenv/versions/3.11.7/bin/python3 mini-transformer/train.py --config mini-transformer/configs/local_experiment.yaml
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-The larger default run is:
+The dataset is expected at:
+
+```text
+archive/train.csv
+archive/validation.csv
+```
+
+Each CSV must contain a `text` column.
+
+## Training
+
+Smoke test:
 
 ```bash
-/Users/eda/.pyenv/versions/3.11.7/bin/python3 mini-transformer/train.py --config mini-transformer/configs/base.yaml
+python mini-transformer/train.py --config mini-transformer/configs/smoke.yaml
 ```
 
-## Cloud GPU Run
+Local experiment:
 
-For a rented GPU machine, clone the repo, place the dataset at `archive/train.csv` and
-`archive/validation.csv`, then run:
+```bash
+python mini-transformer/train.py --config mini-transformer/configs/local_experiment.yaml
+```
+
+Cloud GPU run:
 
 ```bash
 bash scripts/setup_cloud_gpu.sh
-```
-
-That script creates a local virtual environment, installs the project dependencies,
-checks that CUDA is visible, and launches:
-
-```bash
-python mini-transformer/train.py --config mini-transformer/configs/cloud_gpu.yaml
 ```
 
 The cloud config uses:
@@ -105,7 +159,7 @@ The cloud config uses:
 ```text
 GPU device: cuda
 Precision: BF16 autocast
-Tokenizer: BPE, vocab size 1024
+Tokenizer: fast_bpe, vocab size 1024
 Tokenizer cache: tokenizers/tinystories_bpe_1024.json
 Context length: 256
 Batch size: 64
@@ -115,94 +169,99 @@ Model: 8 layers, 8 heads, D=384
 Training: 20,000 optimizer steps
 ```
 
-Recommended rental target: start with one RTX 4090 on Vast.ai or RunPod. H100/H200 is
-much faster, but this model is small enough that the expensive cards are mostly useful
-if you want results quickly rather than cheaply.
-
-## Generation
-
-With random or trained weights:
-
-```bash
-/Users/eda/.pyenv/versions/3.11.7/bin/python3 mini-transformer/generate.py \
-  --config mini-transformer/configs/smoke.yaml \
-  --prompt "Once upon a time" \
-  --max-new-tokens 40 \
-  --greedy
-```
+## Generation CLI
 
 With a checkpoint:
 
 ```bash
-/Users/eda/.pyenv/versions/3.11.7/bin/python3 mini-transformer/generate.py \
-  --config mini-transformer/configs/base.yaml \
-  --checkpoint checkpoints/step_003000.pt \
-  --prompt "Once upon a time" \
-  --max-new-tokens 80 \
+python mini-transformer/generate.py \
+  --config mini-transformer/configs/cloud_gpu.yaml \
+  --checkpoint checkpoints/cloud_gpu/step_003000.pt \
+  --prompt "Once upon a time, there was a boy named Tom." \
+  --max-new-tokens 120 \
   --temperature 0.8 \
   --top-k 40 \
-  --use-cache
+  --use-cache \
+  --device cpu
 ```
 
-New checkpoints include tokenizer state, so generation can load the tokenizer directly instead of retraining BPE from CSV.
+New checkpoints include tokenizer state, so generation can load the tokenizer directly
+instead of retraining BPE from CSV.
+
+## Local Generation UI
+
+Launch the small local interface:
+
+```bash
+python mini-transformer/serve_generation.py \
+  --config mini-transformer/configs/cloud_gpu.yaml \
+  --checkpoint checkpoints/cloud_gpu/step_003000.pt \
+  --device cpu
+```
+
+Then open:
+
+```text
+http://127.0.0.1:7860
+```
+
+The UI exposes:
+
+- prompt
+- max generated tokens
+- temperature
+- top-k
+- greedy decoding
+- KV-cache toggle
+- loaded checkpoint label
+
+Note: the local demo currently uses the recovered `step_003000` cloud checkpoint. The
+full `step_020000` run completed successfully on the GPU, but the local download of
+the final checkpoint archive was truncated. The final metrics above are from the
+completed cloud run.
 
 ## Benchmark
 
+Run:
+
 ```bash
-/Users/eda/.pyenv/versions/3.11.7/bin/python3 mini-transformer/eval/benchmark.py \
-  --config mini-transformer/configs/smoke.yaml \
-  --prompt "Once upon" \
-  --max-new-tokens 4
+python mini-transformer/eval/benchmark.py \
+  --config mini-transformer/configs/cloud_gpu.yaml \
+  --checkpoint checkpoints/cloud_gpu/step_020000.pt \
+  --prompt "Once upon a time" \
+  --max-new-tokens 100
 ```
 
-Smoke benchmark on Mac:
+The benchmark compares naive autoregressive decoding against KV-cache decoding.
 
-| Mode | Tokens/s | TTFT | Avg Decode Latency |
-| --- | ---: | ---: | ---: |
-| Naive | 1463.44 | 0.001140s | 0.000530s |
-| KV cache | 1356.74 | 0.000540s | 0.000793s |
+Naive generation recomputes the full prefix at every step. KV-cache generation keeps
+old K/V tensors and only computes attention for the newest token.
 
-The speedup is noisy on this tiny smoke model. KV cache becomes more important with longer contexts, larger models, and more generated tokens.
+## Engineering Notes
 
-## Training Snapshot
-
-A local `base.yaml` run produced these checkpoint losses:
-
-| Step | Train Loss | Validation Loss |
-| ---: | ---: | ---: |
-| 1000 | 2.0093 | 2.2382 |
-| 2000 | 1.5105 | 2.0616 |
-| 3000 | 1.3373 | 1.6833 |
-| 4000 | 1.0278 | 1.9417 |
-| 5000 | 0.8082 | 2.3036 |
-| 6000 | 0.6160 | 2.7518 |
-
-The validation loss was best around step 3000, then worsened while training loss kept falling. That is useful evidence of overfitting on the capped training subset.
-
-## Findings
-
-- Causal masking is required so next-token training cannot look ahead.
-- RoPE makes Q/K comparisons position-aware without changing tensor shapes.
+- Causal masking prevents tokens from attending to future targets.
+- RoPE rotates Q and K vectors so attention scores become position-aware.
 - Multi-head attention learns several attention patterns in parallel.
-- RMSNorm and residual connections keep the decoder block stable.
-- The MLP transforms per-token features after attention has mixed token information.
-- Naive generation recomputes the full prefix at every step.
-- KV cache reuses old K/V tensors and computes only the newest token during decode.
+- RMSNorm stabilizes activations before attention and MLP sublayers.
+- Residual connections preserve the running token representation across sublayers.
+- The MLP performs per-token feature transformation after attention mixes context.
+- Checkpoints store tokenizer state so generation can be reproduced without rebuilding
+  the tokenizer.
+- The generation UI is dependency-free and uses Python's built-in HTTP server.
 
 ## Limitations
 
-- The BPE tokenizer is educational and simple, not production-grade.
-- Full-dataset cloud training uses `fast_bpe`, which trains BPE from the local CSVs
-  with the `tokenizers` package and caches the result.
-- The local training run uses a capped dataset slice.
-- Existing older checkpoints may not include tokenizer state; new checkpoints do.
-- The current benchmark is a local smoke benchmark, not a full hardware study.
-- BF16 support is wired through autocast, but the README does not yet include measured FP32 vs BF16 results.
+- This is a small educational model, not an instruction-following assistant.
+- Outputs are TinyStories-style continuations, not general-purpose answers.
+- Prompt following is limited, especially with early checkpoints.
+- The recovered local checkpoint is weaker than the final trained checkpoint.
+- The BPE tokenizer is suitable for this project, but not a production tokenizer.
+- No distributed training, FlashAttention, or large-scale hyperparameter sweep is used.
 
-## Next Work
+## Resume Summary
 
-- Run a controlled `local_experiment.yaml` training run and record generation examples.
-- Run FP32 vs BF16 experiments.
-- Run gradient accumulation experiments.
-- Benchmark context lengths 32, 128, 256, and 512.
-- Expand the final README tables with GPU memory and throughput measurements.
+Built and trained a decoder-only Transformer language model from scratch in PyTorch,
+including BPE tokenization, RoPE, multi-head causal attention, RMSNorm, residual
+blocks, MLPs, AdamW training, BF16 cloud training, autoregressive generation, and
+KV-cache inference. Trained on TinyStories with an RTX 4090 and evaluated generation
+throughput, latency, validation loss, and cached decoding speedup.

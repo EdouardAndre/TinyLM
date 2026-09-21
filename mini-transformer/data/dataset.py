@@ -159,6 +159,7 @@ class FastBytePairTokenizer:
 
     def __init__(self, tokenizer) -> None:
         self.tokenizer = tokenizer
+        self._ensure_decoder()
         self.pad_token_id = self.tokenizer.token_to_id("<pad>")
         self.unk_token_id = self.tokenizer.token_to_id("<unk>")
 
@@ -178,7 +179,7 @@ class FastBytePairTokenizer:
 
         try:
             from tokenizers import Tokenizer as BackendTokenizer
-            from tokenizers import models, pre_tokenizers, trainers
+            from tokenizers import decoders, models, pre_tokenizers, trainers
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
                 "tokenizers is required for tokenizer_type='fast_bpe'. "
@@ -187,6 +188,7 @@ class FastBytePairTokenizer:
 
         tokenizer = BackendTokenizer(models.BPE(unk_token="<unk>"))
         tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+        tokenizer.decoder = decoders.ByteLevel()
         trainer = trainers.BpeTrainer(
             vocab_size=vocab_size,
             min_frequency=min_pair_frequency,
@@ -237,13 +239,23 @@ class FastBytePairTokenizer:
         return self.tokenizer.encode(text).ids
 
     def decode(self, token_ids: Iterable[int]) -> str:
-        return self.tokenizer.decode(list(token_ids), skip_special_tokens=True)
+        decoded = self.tokenizer.decode(list(token_ids), skip_special_tokens=True)
+        return _clean_byte_level_text(decoded)
 
     def state_dict(self) -> dict:
         return {
             "type": "fast_bpe",
             "tokenizer_json": self.tokenizer.to_str(),
         }
+
+    def _ensure_decoder(self) -> None:
+        if self.tokenizer.decoder is not None:
+            return
+        try:
+            from tokenizers import decoders
+        except ModuleNotFoundError:
+            return
+        self.tokenizer.decoder = decoders.ByteLevel()
 
 
 def tokenizer_from_state_dict(state: dict) -> Tokenizer:
@@ -442,6 +454,10 @@ def _write_tokenizer_training_files(
                 handle.write("\n")
         text_files.append(text_path)
     return text_files
+
+
+def _clean_byte_level_text(text: str) -> str:
+    return text.replace("Ġ", " ").replace("Ċ", "\n")
 
 
 class LanguageModelingDataset(Dataset[tuple[torch.Tensor, torch.Tensor]]):

@@ -5,3 +5,4 @@ __pycache__/
 archive/
 checkpoints/
 mini-transformer/checkpoints/
+*.tar.gz

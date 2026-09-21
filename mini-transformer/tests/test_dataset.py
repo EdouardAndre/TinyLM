@@ -49,6 +49,17 @@ def test_bpe_tokenizer_state_round_trips_without_retraining():
     assert restored.decode(restored.encode("lowest")) == "lowest"
 
 
+def test_fast_bpe_decode_cleans_byte_level_artifacts():
+    pytest.importorskip("tokenizers")
+    from tokenizers import Tokenizer as BackendTokenizer
+    from tokenizers import models
+
+    backend = BackendTokenizer(models.WordLevel({"<unk>": 0, "Once": 1, "Ġupon": 2, "Ċ": 3}))
+    tokenizer = FastBytePairTokenizer(backend)
+
+    assert tokenizer.decode([1, 2, 3, 1]) == "Once upon\nOnce"
+
+
 def test_fast_bpe_tokenizer_can_train_cache_and_reload(tmp_path):
     pytest.importorskip("tokenizers")
     train_csv = tmp_path / "train.csv"
