@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")"
 
 if [ ! -f "archive/train.csv" ] || [ ! -f "archive/validation.csv" ]; then
   echo "Missing dataset files."
